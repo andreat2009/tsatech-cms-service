@@ -1,0 +1,125 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cms-service-config
+data:
+  CART_DB_URL: jdbc:postgresql://pgtest.platform.svc.cluster.local:5432/testdb
+  CART_DB_USER: testuser
+  KAFKA_BOOTSTRAP_SERVERS: platform-kafka-kafka-bootstrap.platform.svc.cluster.local:9093
+  KAFKA_SECURITY_PROTOCOL: SASL_SSL
+  KAFKA_SASL_MECHANISM: SCRAM-SHA-512
+  KAFKA_SSL_TRUSTSTORE_LOCATION: /etc/kafka/truststore.jks
+  KAFKA_SSL_TRUSTSTORE_TYPE: JKS
+  KEYCLOAK_ISSUER_URI: https://keycloak-platform.apps-crc.testing/realms/master
+  CART_EVENTS_ENABLED: "true"
+  CART_EVENTS_TOPIC: cart.events
+  SERVER_PORT: "8443"
+  SERVER_SSL_ENABLED: "true"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cms-service-secret
+stringData:
+  CART_DB_PASSWORD: testpass
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cms-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: cms-service
+  template:
+    metadata:
+      labels:
+        app: cms-service
+    spec:
+      containers:
+        - name: cms-service
+          image: cms-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8443
+          envFrom:
+            - configMapRef:
+                name: cms-service-config
+            - secretRef:
+                name: cms-service-secret
+          env:
+            - name: JAVA_TOOL_OPTIONS
+              value: "-Djavax.net.ssl.trustStore=/etc/ssl/openshift/truststore.jks -Djavax.net.ssl.trustStorePassword=changeit"
+            - name: KAFKA_USERNAME
+              value: platform-services
+            - name: KAFKA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: platform-services
+                  key: password
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8443
+              scheme: HTTPS
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8443
+              scheme: HTTPS
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          volumeMounts:
+            - name: truststore
+              mountPath: /etc/ssl/openshift
+              readOnly: true
+            - name: kafka-truststore
+              mountPath: /etc/kafka
+              readOnly: true
+            - name: service-tls
+              mountPath: /etc/tls
+              readOnly: true
+      volumes:
+        - name: truststore
+          secret:
+            secretName: platform-truststore
+        - name: kafka-truststore
+          secret:
+            secretName: kafka-truststore
+        - name: service-tls
+          secret:
+            secretName: cms-service-tls
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cms-service
+  annotations:
+    service.beta.openshift.io/serving-cert-secret-name: cms-service-tls
+spec:
+  selector:
+    app: cms-service
+  ports:
+    - port: 8443
+      targetPort: 8443
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: cms-service
+spec:
+  host: cms-service-platform.apps-crc.testing
+  to:
+    kind: Service
+    name: cms-service
+  port:
+    targetPort: 8443
+  tls:
+    termination: reencrypt
+    insecureEdgeTerminationPolicy: Redirect
