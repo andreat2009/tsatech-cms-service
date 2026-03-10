@@ -3,8 +3,10 @@ package com.newproject.cms.controller;
 import com.newproject.cms.dto.InformationRequest;
 import com.newproject.cms.dto.InformationResponse;
 import com.newproject.cms.service.InformationService;
+import com.newproject.cms.service.LanguageSupport;
 import jakarta.validation.Valid;
 import java.util.List;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
@@ -18,18 +20,33 @@ public class InformationController {
     }
 
     @GetMapping
-    public List<InformationResponse> list(@RequestParam(required = false) Boolean active) {
-        return service.list(active);
+    public List<InformationResponse> list(
+        @RequestParam(required = false) Boolean active,
+        @RequestParam(required = false) String lang,
+        @RequestHeader(value = HttpHeaders.ACCEPT_LANGUAGE, required = false) String acceptLanguage
+    ) {
+        String resolvedLanguage = LanguageSupport.resolveLanguage(lang, acceptLanguage);
+        return service.list(active, resolvedLanguage);
     }
 
     @GetMapping("/{id}")
-    public InformationResponse get(@PathVariable Long id) {
-        return service.get(id);
+    public InformationResponse get(
+        @PathVariable Long id,
+        @RequestParam(required = false) String lang,
+        @RequestHeader(value = HttpHeaders.ACCEPT_LANGUAGE, required = false) String acceptLanguage
+    ) {
+        String resolvedLanguage = LanguageSupport.resolveLanguage(lang, acceptLanguage);
+        return service.get(id, resolvedLanguage);
     }
 
     @GetMapping("/slug/{slug}")
-    public InformationResponse getBySlug(@PathVariable String slug) {
-        return service.getBySlug(slug);
+    public InformationResponse getBySlug(
+        @PathVariable String slug,
+        @RequestParam(required = false) String lang,
+        @RequestHeader(value = HttpHeaders.ACCEPT_LANGUAGE, required = false) String acceptLanguage
+    ) {
+        String resolvedLanguage = LanguageSupport.resolveLanguage(lang, acceptLanguage);
+        return service.getBySlug(slug, resolvedLanguage);
     }
 
     @PostMapping

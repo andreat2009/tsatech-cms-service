@@ -2,6 +2,8 @@ package com.newproject.cms.domain;
 
 import jakarta.persistence.*;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.List;
 
 @Entity
 @Table(name = "information_page")
@@ -25,6 +27,9 @@ public class InformationPage {
     @Column(nullable = false)
     private Boolean active;
 
+    @OneToMany(mappedBy = "page", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<InformationPageTranslation> translations = new ArrayList<>();
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 
@@ -43,6 +48,8 @@ public class InformationPage {
     public void setSortOrder(Integer sortOrder) { this.sortOrder = sortOrder; }
     public Boolean getActive() { return active; }
     public void setActive(Boolean active) { this.active = active; }
+    public List<InformationPageTranslation> getTranslations() { return translations; }
+    public void setTranslations(List<InformationPageTranslation> translations) { this.translations = translations; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
