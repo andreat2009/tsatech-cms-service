@@ -15,7 +15,7 @@ public class StoreSettings {
     @Column(name = "site_name", nullable = false, length = 255)
     private String siteName;
 
-    @Column(name = "logo_url", length = 1024)
+    @Column(name = "logo_url", columnDefinition = "TEXT")
     private String logoUrl;
 
     @Column(name = "contact_email", length = 255)
