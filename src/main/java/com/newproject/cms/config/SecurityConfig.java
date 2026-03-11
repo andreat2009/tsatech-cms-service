@@ -26,6 +26,9 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/actuator/health", "/actuator/info").permitAll()
 
                 .requestMatchers(HttpMethod.GET, "/api/cms/information", "/api/cms/information/**").permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/cms/settings/public", "/api/cms/settings/runtime").permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/cms/settings", "/api/cms/settings/**").hasRole("ADMIN")
+                .requestMatchers(HttpMethod.PUT, "/api/cms/settings", "/api/cms/settings/**").hasRole("ADMIN")
                 .requestMatchers(HttpMethod.POST, "/api/cms/information", "/api/cms/information/**").hasRole("ADMIN")
                 .requestMatchers(HttpMethod.PUT, "/api/cms/information/**").hasRole("ADMIN")
                 .requestMatchers(HttpMethod.DELETE, "/api/cms/information/**").hasRole("ADMIN")
