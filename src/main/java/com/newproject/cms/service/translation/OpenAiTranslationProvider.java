@@ -10,6 +10,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyStore;
@@ -20,6 +21,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManagerFactory;
 import org.slf4j.Logger;
@@ -30,6 +32,8 @@ import org.springframework.stereotype.Component;
 public class OpenAiTranslationProvider implements TranslationProvider {
     private static final Logger logger = LoggerFactory.getLogger(OpenAiTranslationProvider.class);
     private static final char[] DEFAULT_CACERTS_PASSWORD = "changeit".toCharArray();
+    private static final int DEFAULT_RETRY_COUNT = 2;
+    private static final long RETRY_BASE_DELAY_MS = 750L;
 
     private final CmsTranslationProperties properties;
     private final ObjectMapper objectMapper;
@@ -70,50 +74,122 @@ public class OpenAiTranslationProvider implements TranslationProvider {
             return result;
         }
 
-        try {
-            String content = callOpenAi(
-                apiKey,
-                firstNonBlank(trimToNull(properties.getModel()), "gpt-4o-mini"),
-                normalizeBaseUrl(firstNonBlank(trimToNull(properties.getOpenai().getBaseUrl()), "https://api.openai.com/v1")),
-                sourceLanguage,
-                sourceContent,
-                targetLanguages
-            );
+        String model = firstNonBlank(trimToNull(properties.getModel()), "gpt-4o-mini");
+        String baseUrl = normalizeBaseUrl(firstNonBlank(trimToNull(properties.getOpenai().getBaseUrl()), "https://api.openai.com/v1"));
+        HttpClient client = buildOpenAiHttpClient();
+        Map<String, LocalizedContent> translated = new LinkedHashMap<>();
+        int attempts = Math.max(DEFAULT_RETRY_COUNT, 1);
 
-            Map<String, LocalizedContent> translated = parseTranslations(content, targetLanguages);
-            result.setTranslations(translated);
-            if (translated.isEmpty()) {
-                result.getWarnings().add("OpenAI response parsed but no translations were produced");
+        for (String targetLanguage : new LinkedHashSet<>(targetLanguages)) {
+            if (targetLanguage == null || targetLanguage.isBlank()) {
+                continue;
             }
-        } catch (Exception ex) {
-            logger.warn("OpenAI CMS translation failed: {}", ex.getMessage());
-            result.getWarnings().add("OpenAI CMS translation failed: " + ex.getMessage());
+            try {
+                LocalizedContent translatedContent = translateSingleTargetWithRetry(
+                    client,
+                    apiKey,
+                    model,
+                    baseUrl,
+                    sourceLanguage,
+                    sourceContent,
+                    targetLanguage,
+                    attempts
+                );
+                if (translatedContent != null
+                    && (trimToNull(translatedContent.getTitle()) != null || trimToNull(translatedContent.getContent()) != null)) {
+                    translated.put(targetLanguage, translatedContent);
+                } else {
+                    result.getWarnings().add("No translated content returned for language " + targetLanguage);
+                }
+            } catch (Exception ex) {
+                String msg = "OpenAI CMS translation failed for " + targetLanguage + ": " + ex.getMessage();
+                logger.warn(msg);
+                result.getWarnings().add(msg);
+            }
+        }
+
+        result.setTranslations(translated);
+        if (translated.isEmpty()) {
+            result.getWarnings().add("OpenAI response parsed but no translations were produced");
         }
 
         return result;
     }
 
-    private String callOpenAi(
+    private LocalizedContent translateSingleTargetWithRetry(
+        HttpClient client,
         String apiKey,
         String model,
         String baseUrl,
         String sourceLanguage,
         LocalizedContent sourceContent,
-        Set<String> targetLanguages
+        String targetLanguage,
+        int maxAttempts
     ) throws IOException, InterruptedException {
-        HttpClient client = buildOpenAiHttpClient();
+        Exception last = null;
+        for (int attempt = 1; attempt <= Math.max(1, maxAttempts); attempt++) {
+            try {
+                String content = callOpenAi(
+                    client,
+                    apiKey,
+                    model,
+                    baseUrl,
+                    sourceLanguage,
+                    sourceContent,
+                    targetLanguage
+                );
+                return parseSingleTranslation(content, targetLanguage);
+            } catch (Exception ex) {
+                last = ex;
+                if (attempt >= maxAttempts || !isRetryable(ex)) {
+                    break;
+                }
+                long delayMs = RETRY_BASE_DELAY_MS * attempt;
+                logger.warn(
+                    "OpenAI CMS translation retry {}/{} for lang={} after error: {}",
+                    attempt,
+                    maxAttempts,
+                    targetLanguage,
+                    ex.getMessage()
+                );
+                sleepQuietly(delayMs);
+            }
+        }
 
+        if (last instanceof IOException ioEx) {
+            throw ioEx;
+        }
+        if (last instanceof InterruptedException interruptedException) {
+            Thread.currentThread().interrupt();
+            throw interruptedException;
+        }
+        if (last != null) {
+            throw new IOException(last.getMessage(), last);
+        }
+        return null;
+    }
+
+    private String callOpenAi(
+        HttpClient client,
+        String apiKey,
+        String model,
+        String baseUrl,
+        String sourceLanguage,
+        LocalizedContent sourceContent,
+        String targetLanguage
+    ) throws IOException, InterruptedException {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("model", model);
-        payload.put("temperature", 0.2);
+        payload.put("temperature", 0.0);
+        payload.put("max_tokens", 2400);
         payload.put("messages", List.of(
             Map.of(
                 "role", "system",
-                "content", "You translate ecommerce informational pages. Return ONLY valid JSON with language codes as keys and fields title, content. Keep HTML structure and links valid. Preserve brand names and legal references."
+                "content", "You translate ecommerce informational pages. Return ONLY valid JSON with fields title and content. Keep HTML structure and links valid. Preserve brand names and legal references."
             ),
             Map.of(
                 "role", "user",
-                "content", buildUserPrompt(sourceLanguage, sourceContent, targetLanguages)
+                "content", buildUserPrompt(sourceLanguage, sourceContent, targetLanguage)
             )
         ));
 
@@ -187,7 +263,7 @@ public class OpenAiTranslationProvider implements TranslationProvider {
         return null;
     }
 
-    private Map<String, LocalizedContent> parseTranslations(String content, Set<String> targetLanguages) throws IOException {
+    private LocalizedContent parseSingleTranslation(String content, String targetLanguage) throws IOException {
         String jsonPayload = extractJsonPayload(content);
         JsonNode root = objectMapper.readTree(jsonPayload);
 
@@ -195,23 +271,22 @@ public class OpenAiTranslationProvider implements TranslationProvider {
             ? root.get("translations")
             : root;
 
-        Map<String, LocalizedContent> translations = new LinkedHashMap<>();
-        for (String language : new LinkedHashSet<>(targetLanguages)) {
-            JsonNode langNode = candidate.get(language);
-            if (langNode == null || !langNode.isObject()) {
-                continue;
-            }
-
-            LocalizedContent localized = new LocalizedContent();
-            localized.setTitle(trimToNull(langNode.path("title").asText(null)));
-            localized.setContent(trimToNull(langNode.path("content").asText(null)));
-
-            if (localized.getTitle() != null || localized.getContent() != null) {
-                translations.put(language, localized);
-            }
+        if (candidate.has(targetLanguage) && candidate.get(targetLanguage).isObject()) {
+            candidate = candidate.get(targetLanguage);
         }
 
-        return translations;
+        if (!candidate.isObject()) {
+            return null;
+        }
+
+        LocalizedContent localized = new LocalizedContent();
+        localized.setTitle(trimToNull(candidate.path("title").asText(null)));
+        localized.setContent(trimToNull(candidate.path("content").asText(null)));
+
+        if (localized.getTitle() == null && localized.getContent() == null) {
+            return null;
+        }
+        return localized;
     }
 
     private String extractJsonPayload(String content) {
@@ -232,15 +307,39 @@ public class OpenAiTranslationProvider implements TranslationProvider {
         return trimmed;
     }
 
-    private String buildUserPrompt(String sourceLanguage, LocalizedContent sourceContent, Set<String> targetLanguages) {
+    private String buildUserPrompt(String sourceLanguage, LocalizedContent sourceContent, String targetLanguage) {
         String sourceTitle = firstNonBlank(trimToNull(sourceContent.getTitle()), "");
         String sourceHtml = firstNonBlank(trimToNull(sourceContent.getContent()), "");
 
         return "Source language: " + sourceLanguage + "\n"
-            + "Target languages: " + String.join(",", targetLanguages) + "\n"
+            + "Target language: " + targetLanguage + "\n"
             + "Title: " + sourceTitle + "\n"
             + "HTML content: " + sourceHtml + "\n"
-            + "Return JSON only, schema: {\"en\":{\"title\":\"...\",\"content\":\"...\"}, ...}";
+            + "Return JSON only with schema: {\"title\":\"...\",\"content\":\"...\"}."
+            + " Keep the HTML valid and preserve links.";
+    }
+
+    private boolean isRetryable(Exception ex) {
+        if (ex instanceof InterruptedException) {
+            return false;
+        }
+        if (ex instanceof HttpTimeoutException) {
+            return true;
+        }
+        String message = trimToNull(ex.getMessage());
+        return message != null
+            && (message.toLowerCase().contains("timed out")
+            || message.toLowerCase().contains("timeout")
+            || message.toLowerCase().contains("connection reset"));
+    }
+
+    private void sleepQuietly(long delayMs) throws InterruptedException {
+        try {
+            TimeUnit.MILLISECONDS.sleep(Math.max(0L, delayMs));
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw ex;
+        }
     }
 
     private String normalizeBaseUrl(String baseUrl) {
