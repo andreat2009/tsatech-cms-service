@@ -14,6 +14,13 @@ import org.springframework.transaction.annotation.Transactional;
 public class StoreSettingsService {
     private static final Long SETTINGS_ID = 1L;
 
+    private static final int DEFAULT_LOGO_MAX_HEIGHT_PX = 96;
+    private static final int DEFAULT_SITE_NAME_FONT_SIZE_PX = 28;
+    private static final int MIN_LOGO_MAX_HEIGHT_PX = 32;
+    private static final int MAX_LOGO_MAX_HEIGHT_PX = 220;
+    private static final int MIN_SITE_NAME_FONT_SIZE_PX = 14;
+    private static final int MAX_SITE_NAME_FONT_SIZE_PX = 56;
+
     private final StoreSettingsRepository repository;
 
     public StoreSettingsService(StoreSettingsRepository repository) {
@@ -53,6 +60,8 @@ public class StoreSettingsService {
 
         defaults.setId(SETTINGS_ID);
         defaults.setSiteName("TSATech Store");
+        defaults.setLogoMaxHeightPx(DEFAULT_LOGO_MAX_HEIGHT_PX);
+        defaults.setSiteNameFontSizePx(DEFAULT_SITE_NAME_FONT_SIZE_PX);
         defaults.setContactEmail("andrea.terrasi78@gmail.com");
         defaults.setSupportEmail("andrea.terrasi78@gmail.com");
         defaults.setSupportPhone("+39 800 000 000");
@@ -79,6 +88,8 @@ public class StoreSettingsService {
     private void applyUpdate(StoreSettings settings, StoreSettingsRequest request) {
         settings.setSiteName(firstNonBlank(trimToNull(request.getSiteName()), settings.getSiteName(), "TSATech Store"));
         settings.setLogoUrl(trimToNull(request.getLogoUrl()));
+        settings.setLogoMaxHeightPx(clampInt(request.getLogoMaxHeightPx(), settings.getLogoMaxHeightPx(), DEFAULT_LOGO_MAX_HEIGHT_PX, MIN_LOGO_MAX_HEIGHT_PX, MAX_LOGO_MAX_HEIGHT_PX));
+        settings.setSiteNameFontSizePx(clampInt(request.getSiteNameFontSizePx(), settings.getSiteNameFontSizePx(), DEFAULT_SITE_NAME_FONT_SIZE_PX, MIN_SITE_NAME_FONT_SIZE_PX, MAX_SITE_NAME_FONT_SIZE_PX));
         settings.setContactEmail(trimToNull(request.getContactEmail()));
         settings.setSupportEmail(trimToNull(request.getSupportEmail()));
         settings.setSupportPhone(trimToNull(request.getSupportPhone()));
@@ -123,6 +134,8 @@ public class StoreSettingsService {
         response.setId(settings.getId());
         response.setSiteName(settings.getSiteName());
         response.setLogoUrl(settings.getLogoUrl());
+        response.setLogoMaxHeightPx(clampInt(settings.getLogoMaxHeightPx(), null, DEFAULT_LOGO_MAX_HEIGHT_PX, MIN_LOGO_MAX_HEIGHT_PX, MAX_LOGO_MAX_HEIGHT_PX));
+        response.setSiteNameFontSizePx(clampInt(settings.getSiteNameFontSizePx(), null, DEFAULT_SITE_NAME_FONT_SIZE_PX, MIN_SITE_NAME_FONT_SIZE_PX, MAX_SITE_NAME_FONT_SIZE_PX));
         response.setContactEmail(settings.getContactEmail());
         response.setSupportEmail(settings.getSupportEmail());
         response.setSupportPhone(settings.getSupportPhone());
@@ -150,6 +163,8 @@ public class StoreSettingsService {
         PublicStoreSettingsResponse response = new PublicStoreSettingsResponse();
         response.setSiteName(settings.getSiteName());
         response.setLogoUrl(settings.getLogoUrl());
+        response.setLogoMaxHeightPx(clampInt(settings.getLogoMaxHeightPx(), null, DEFAULT_LOGO_MAX_HEIGHT_PX, MIN_LOGO_MAX_HEIGHT_PX, MAX_LOGO_MAX_HEIGHT_PX));
+        response.setSiteNameFontSizePx(clampInt(settings.getSiteNameFontSizePx(), null, DEFAULT_SITE_NAME_FONT_SIZE_PX, MIN_SITE_NAME_FONT_SIZE_PX, MAX_SITE_NAME_FONT_SIZE_PX));
         response.setContactEmail(settings.getContactEmail());
         response.setSupportEmail(settings.getSupportEmail());
         response.setSupportPhone(settings.getSupportPhone());
@@ -182,6 +197,19 @@ public class StoreSettingsService {
         }
         String trimmed = value.trim();
         return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private Integer clampInt(Integer value, Integer fallback, int defaultValue, int min, int max) {
+        int resolved = value != null
+            ? value
+            : (fallback != null ? fallback : defaultValue);
+        if (resolved < min) {
+            return min;
+        }
+        if (resolved > max) {
+            return max;
+        }
+        return resolved;
     }
 
     private String firstNonBlank(String... values) {

@@ -18,6 +18,12 @@ public class StoreSettings {
     @Column(name = "logo_url", columnDefinition = "TEXT")
     private String logoUrl;
 
+    @Column(name = "logo_max_height_px", nullable = false)
+    private Integer logoMaxHeightPx;
+
+    @Column(name = "site_name_font_size_px", nullable = false)
+    private Integer siteNameFontSizePx;
+
     @Column(name = "contact_email", length = 255)
     private String contactEmail;
 
@@ -100,6 +106,22 @@ public class StoreSettings {
 
     public void setLogoUrl(String logoUrl) {
         this.logoUrl = logoUrl;
+    }
+
+    public Integer getLogoMaxHeightPx() {
+        return logoMaxHeightPx;
+    }
+
+    public void setLogoMaxHeightPx(Integer logoMaxHeightPx) {
+        this.logoMaxHeightPx = logoMaxHeightPx;
+    }
+
+    public Integer getSiteNameFontSizePx() {
+        return siteNameFontSizePx;
+    }
+
+    public void setSiteNameFontSizePx(Integer siteNameFontSizePx) {
+        this.siteNameFontSizePx = siteNameFontSizePx;
     }
 
     public String getContactEmail() {
