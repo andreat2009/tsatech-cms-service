@@ -38,6 +38,14 @@ spring:
           issuer-uri: ${KEYCLOAK_ISSUER_URI:https://keycloak-platform.apps-crc.testing/realms/master}
 
 cms:
+  translation:
+    enabled: ${CMS_TRANSLATION_ENABLED:true}
+    provider: ${CMS_TRANSLATION_PROVIDER:openai}
+    model: ${OPENAI_MODEL:gpt-4o-mini}
+    timeout-ms: ${CMS_TRANSLATION_TIMEOUT_MS:20000}
+    openai:
+      api-key: ${OPENAI_API_KEY:}
+      base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
   events:
     enabled: ${CMS_EVENTS_ENABLED:true}
     topic: ${CMS_EVENTS_TOPIC:cms.events}

@@ -1,0 +1,280 @@
+package com.newproject.cms.service.translation;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.newproject.cms.config.CmsTranslationProperties;
+import com.newproject.cms.dto.LocalizedContent;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.KeyStore;
+import java.security.SecureRandom;
+import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManagerFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+@Component
+public class OpenAiTranslationProvider implements TranslationProvider {
+    private static final Logger logger = LoggerFactory.getLogger(OpenAiTranslationProvider.class);
+    private static final char[] DEFAULT_CACERTS_PASSWORD = "changeit".toCharArray();
+
+    private final CmsTranslationProperties properties;
+    private final ObjectMapper objectMapper;
+
+    public OpenAiTranslationProvider(CmsTranslationProperties properties, ObjectMapper objectMapper) {
+        this.properties = properties;
+        this.objectMapper = objectMapper;
+    }
+
+    @Override
+    public TranslationResult translateInformationContent(String sourceLanguage, LocalizedContent sourceContent, Set<String> targetLanguages) {
+        TranslationResult result = new TranslationResult();
+
+        if (targetLanguages == null || targetLanguages.isEmpty()) {
+            return result;
+        }
+
+        if (!properties.isEnabled()) {
+            result.getWarnings().add("CMS translation is disabled");
+            return result;
+        }
+
+        if (!"openai".equalsIgnoreCase(trimToNull(properties.getProvider()))) {
+            result.getWarnings().add("Translation provider is not OpenAI");
+            return result;
+        }
+
+        String apiKey = trimToNull(properties.getOpenai().getApiKey());
+        if (apiKey == null) {
+            result.getWarnings().add("OPENAI_API_KEY missing: translation skipped");
+            return result;
+        }
+
+        String sourceTitle = trimToNull(sourceContent != null ? sourceContent.getTitle() : null);
+        String sourceContentHtml = trimToNull(sourceContent != null ? sourceContent.getContent() : null);
+        if (sourceTitle == null || sourceContentHtml == null) {
+            result.getWarnings().add("Missing source information title/content");
+            return result;
+        }
+
+        try {
+            String content = callOpenAi(
+                apiKey,
+                firstNonBlank(trimToNull(properties.getModel()), "gpt-4o-mini"),
+                normalizeBaseUrl(firstNonBlank(trimToNull(properties.getOpenai().getBaseUrl()), "https://api.openai.com/v1")),
+                sourceLanguage,
+                sourceContent,
+                targetLanguages
+            );
+
+            Map<String, LocalizedContent> translated = parseTranslations(content, targetLanguages);
+            result.setTranslations(translated);
+            if (translated.isEmpty()) {
+                result.getWarnings().add("OpenAI response parsed but no translations were produced");
+            }
+        } catch (Exception ex) {
+            logger.warn("OpenAI CMS translation failed: {}", ex.getMessage());
+            result.getWarnings().add("OpenAI CMS translation failed: " + ex.getMessage());
+        }
+
+        return result;
+    }
+
+    private String callOpenAi(
+        String apiKey,
+        String model,
+        String baseUrl,
+        String sourceLanguage,
+        LocalizedContent sourceContent,
+        Set<String> targetLanguages
+    ) throws IOException, InterruptedException {
+        HttpClient client = buildOpenAiHttpClient();
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("model", model);
+        payload.put("temperature", 0.2);
+        payload.put("messages", List.of(
+            Map.of(
+                "role", "system",
+                "content", "You translate ecommerce informational pages. Return ONLY valid JSON with language codes as keys and fields title, content. Keep HTML structure and links valid. Preserve brand names and legal references."
+            ),
+            Map.of(
+                "role", "user",
+                "content", buildUserPrompt(sourceLanguage, sourceContent, targetLanguages)
+            )
+        ));
+
+        String body = objectMapper.writeValueAsString(payload);
+
+        HttpRequest request = HttpRequest.newBuilder()
+            .uri(URI.create(baseUrl + "/chat/completions"))
+            .timeout(Duration.ofMillis(Math.max(1000, properties.getTimeoutMs())))
+            .header("Authorization", "Bearer " + apiKey)
+            .header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(body))
+            .build();
+
+        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() >= 400) {
+            throw new IOException("HTTP " + response.statusCode() + " from OpenAI: " + abbreviate(trimToNull(response.body()), 240));
+        }
+
+        JsonNode root = objectMapper.readTree(response.body());
+        String content = root.path("choices").path(0).path("message").path("content").asText();
+        String trimmed = trimToNull(content);
+        if (trimmed == null) {
+            throw new IOException("Empty OpenAI content");
+        }
+        return trimmed;
+    }
+
+    private HttpClient buildOpenAiHttpClient() {
+        HttpClient.Builder builder = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofMillis(Math.max(1000, properties.getTimeoutMs())));
+
+        SSLContext context = loadJvmDefaultCacertsContext();
+        if (context != null) {
+            builder.sslContext(context);
+        }
+
+        return builder.build();
+    }
+
+    private SSLContext loadJvmDefaultCacertsContext() {
+        String javaHome = trimToNull(System.getProperty("java.home"));
+        if (javaHome == null) {
+            return null;
+        }
+
+        List<Path> candidates = List.of(
+            Path.of(javaHome, "lib", "security", "cacerts"),
+            Path.of(javaHome, "jre", "lib", "security", "cacerts")
+        );
+
+        for (Path candidate : candidates) {
+            if (!Files.isRegularFile(candidate)) {
+                continue;
+            }
+            try (InputStream in = Files.newInputStream(candidate)) {
+                KeyStore keyStore = KeyStore.getInstance(KeyStore.getDefaultType());
+                keyStore.load(in, DEFAULT_CACERTS_PASSWORD);
+
+                TrustManagerFactory trustManagerFactory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+                trustManagerFactory.init(keyStore);
+
+                SSLContext sslContext = SSLContext.getInstance("TLS");
+                sslContext.init(null, trustManagerFactory.getTrustManagers(), new SecureRandom());
+                return sslContext;
+            } catch (Exception ex) {
+                logger.debug("Unable to load JVM cacerts from {}: {}", candidate, ex.getMessage());
+            }
+        }
+
+        logger.warn("Unable to load JVM default cacerts; OpenAI HTTPS calls will use process truststore config");
+        return null;
+    }
+
+    private Map<String, LocalizedContent> parseTranslations(String content, Set<String> targetLanguages) throws IOException {
+        String jsonPayload = extractJsonPayload(content);
+        JsonNode root = objectMapper.readTree(jsonPayload);
+
+        JsonNode candidate = root.has("translations") && root.get("translations").isObject()
+            ? root.get("translations")
+            : root;
+
+        Map<String, LocalizedContent> translations = new LinkedHashMap<>();
+        for (String language : new LinkedHashSet<>(targetLanguages)) {
+            JsonNode langNode = candidate.get(language);
+            if (langNode == null || !langNode.isObject()) {
+                continue;
+            }
+
+            LocalizedContent localized = new LocalizedContent();
+            localized.setTitle(trimToNull(langNode.path("title").asText(null)));
+            localized.setContent(trimToNull(langNode.path("content").asText(null)));
+
+            if (localized.getTitle() != null || localized.getContent() != null) {
+                translations.put(language, localized);
+            }
+        }
+
+        return translations;
+    }
+
+    private String extractJsonPayload(String content) {
+        String trimmed = content.trim();
+        if (trimmed.startsWith("```") && trimmed.contains("\n")) {
+            int start = trimmed.indexOf('\n') + 1;
+            int end = trimmed.lastIndexOf("```");
+            if (end > start) {
+                trimmed = trimmed.substring(start, end).trim();
+            }
+        }
+
+        int firstBrace = trimmed.indexOf('{');
+        int lastBrace = trimmed.lastIndexOf('}');
+        if (firstBrace >= 0 && lastBrace > firstBrace) {
+            return trimmed.substring(firstBrace, lastBrace + 1);
+        }
+        return trimmed;
+    }
+
+    private String buildUserPrompt(String sourceLanguage, LocalizedContent sourceContent, Set<String> targetLanguages) {
+        String sourceTitle = firstNonBlank(trimToNull(sourceContent.getTitle()), "");
+        String sourceHtml = firstNonBlank(trimToNull(sourceContent.getContent()), "");
+
+        return "Source language: " + sourceLanguage + "\n"
+            + "Target languages: " + String.join(",", targetLanguages) + "\n"
+            + "Title: " + sourceTitle + "\n"
+            + "HTML content: " + sourceHtml + "\n"
+            + "Return JSON only, schema: {\"en\":{\"title\":\"...\",\"content\":\"...\"}, ...}";
+    }
+
+    private String normalizeBaseUrl(String baseUrl) {
+        String normalized = baseUrl.trim();
+        while (normalized.endsWith("/")) {
+            normalized = normalized.substring(0, normalized.length() - 1);
+        }
+        return normalized;
+    }
+
+    private String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
+        return "";
+    }
+
+    private String abbreviate(String value, int maxLen) {
+        if (value == null) {
+            return "";
+        }
+        if (value.length() <= maxLen) {
+            return value;
+        }
+        return value.substring(0, maxLen) + "...";
+    }
+}

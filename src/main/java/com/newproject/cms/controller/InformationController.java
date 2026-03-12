@@ -1,5 +1,7 @@
 package com.newproject.cms.controller;
 
+import com.newproject.cms.dto.InformationAutoTranslateRequest;
+import com.newproject.cms.dto.InformationAutoTranslateResponse;
 import com.newproject.cms.dto.InformationRequest;
 import com.newproject.cms.dto.InformationResponse;
 import com.newproject.cms.service.InformationService;
@@ -58,6 +60,11 @@ public class InformationController {
     @PutMapping("/{id}")
     public InformationResponse update(@PathVariable Long id, @Valid @RequestBody InformationRequest request) {
         return service.update(id, request);
+    }
+
+    @PostMapping("/translate")
+    public InformationAutoTranslateResponse autoTranslate(@RequestBody InformationAutoTranslateRequest request) {
+        return service.autoTranslate(request);
     }
 
     @DeleteMapping("/{id}")

@@ -2,6 +2,8 @@ package com.newproject.cms.service;
 
 import com.newproject.cms.domain.InformationPage;
 import com.newproject.cms.domain.InformationPageTranslation;
+import com.newproject.cms.dto.InformationAutoTranslateRequest;
+import com.newproject.cms.dto.InformationAutoTranslateResponse;
 import com.newproject.cms.dto.InformationRequest;
 import com.newproject.cms.dto.InformationResponse;
 import com.newproject.cms.dto.LocalizedContent;
@@ -9,13 +11,17 @@ import com.newproject.cms.events.EventPublisher;
 import com.newproject.cms.exception.BadRequestException;
 import com.newproject.cms.exception.NotFoundException;
 import com.newproject.cms.repository.InformationPageRepository;
+import com.newproject.cms.service.translation.TranslationResult;
 import java.text.Normalizer;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,10 +30,16 @@ import org.springframework.transaction.annotation.Transactional;
 public class InformationService {
     private final InformationPageRepository repository;
     private final EventPublisher eventPublisher;
+    private final CmsTranslationService cmsTranslationService;
 
-    public InformationService(InformationPageRepository repository, EventPublisher eventPublisher) {
+    public InformationService(
+        InformationPageRepository repository,
+        EventPublisher eventPublisher,
+        CmsTranslationService cmsTranslationService
+    ) {
         this.repository = repository;
         this.eventPublisher = eventPublisher;
+        this.cmsTranslationService = cmsTranslationService;
     }
 
     @Transactional(readOnly = true)
@@ -95,6 +107,93 @@ public class InformationService {
             .orElseThrow(() -> new NotFoundException("Information page not found"));
         repository.delete(page);
         eventPublisher.publish("INFORMATION_PAGE_DELETED", "information_page", id.toString(), null);
+    }
+
+    @Transactional(readOnly = true)
+    public InformationAutoTranslateResponse autoTranslate(InformationAutoTranslateRequest request) {
+        Map<String, LocalizedContent> normalized = normalizeTranslationPayload(
+            request != null ? request.getTranslations() : null
+        );
+
+        String sourceLanguage = LanguageSupport.normalizeLanguage(request != null ? request.getSourceLanguage() : null);
+        if (sourceLanguage == null) {
+            sourceLanguage = LanguageSupport.DEFAULT_LANGUAGE;
+        }
+
+        LocalizedContent sourceContent = normalized.get(sourceLanguage);
+        if (sourceContent == null) {
+            sourceContent = new LocalizedContent();
+            normalized.put(sourceLanguage, sourceContent);
+        }
+
+        if (trimToNull(sourceContent.getTitle()) == null) {
+            throw new BadRequestException("Source language information title is required");
+        }
+        if (trimToNull(sourceContent.getContent()) == null) {
+            throw new BadRequestException("Source language information content is required");
+        }
+
+        boolean overwrite = request != null && Boolean.TRUE.equals(request.getOverwriteExisting());
+        Set<String> targets = new LinkedHashSet<>();
+        for (String language : LanguageSupport.SUPPORTED_LANGUAGES) {
+            if (language.equals(sourceLanguage)) {
+                continue;
+            }
+            LocalizedContent current = normalized.get(language);
+            if (overwrite
+                || isBlank(current != null ? current.getTitle() : null)
+                || isBlank(current != null ? current.getContent() : null)) {
+                targets.add(language);
+            }
+        }
+
+        TranslationResult translationResult = cmsTranslationService.translateInformationContent(sourceLanguage, sourceContent, targets);
+        Set<String> translatedLanguages = new LinkedHashSet<>();
+
+        if (translationResult.getTranslations() != null) {
+            for (Map.Entry<String, LocalizedContent> entry : translationResult.getTranslations().entrySet()) {
+                String language = LanguageSupport.normalizeLanguage(entry.getKey());
+                if (language == null || language.equals(sourceLanguage)) {
+                    continue;
+                }
+
+                LocalizedContent translated = entry.getValue();
+                if (translated == null) {
+                    continue;
+                }
+
+                LocalizedContent current = normalized.get(language);
+                if (current == null) {
+                    current = new LocalizedContent();
+                    normalized.put(language, current);
+                }
+
+                boolean changed = false;
+                String translatedTitle = trimToNull(translated.getTitle());
+                String translatedContent = trimToNull(translated.getContent());
+
+                if (translatedTitle != null && (overwrite || isBlank(current.getTitle()))) {
+                    current.setTitle(translatedTitle);
+                    changed = true;
+                }
+                if (translatedContent != null && (overwrite || isBlank(current.getContent()))) {
+                    current.setContent(translatedContent);
+                    changed = true;
+                }
+
+                if (changed) {
+                    translatedLanguages.add(language);
+                }
+            }
+        }
+
+        InformationAutoTranslateResponse response = new InformationAutoTranslateResponse();
+        response.setTranslations(normalized);
+        response.setTranslatedLanguages(new ArrayList<>(translatedLanguages));
+        response.setWarnings(translationResult.getWarnings() != null
+            ? new ArrayList<>(translationResult.getWarnings())
+            : new ArrayList<>());
+        return response;
     }
 
     private void apply(InformationPage page, InformationRequest request, boolean createMode) {
@@ -283,6 +382,18 @@ public class InformationService {
         return normalized;
     }
 
+    private Map<String, LocalizedContent> normalizeTranslationPayload(Map<String, LocalizedContent> requested) {
+        Map<String, LocalizedContent> normalized = new LinkedHashMap<>();
+        for (String language : LanguageSupport.SUPPORTED_LANGUAGES) {
+            LocalizedContent source = requested != null ? requested.get(language) : null;
+            LocalizedContent content = new LocalizedContent();
+            content.setTitle(trimToNull(source != null ? source.getTitle() : null));
+            content.setContent(trimToNull(source != null ? source.getContent() : null));
+            normalized.put(language, content);
+        }
+        return normalized;
+    }
+
     private String extractValue(Map<String, LocalizedContent> requested, String language, boolean titleField) {
         if (requested == null) {
             return null;
@@ -312,5 +423,9 @@ public class InformationService {
         }
         String trimmed = value.trim();
         return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private boolean isBlank(String value) {
+        return trimToNull(value) == null;
     }
 }
