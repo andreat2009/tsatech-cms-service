@@ -60,6 +60,7 @@ public class StoreSettingsService {
 
         defaults.setId(SETTINGS_ID);
         defaults.setSiteName("TSATech Store");
+        defaults.setSiteMetaKeywords("ecommerce, catalogo online, offerte, shop");
         defaults.setLogoMaxHeightPx(DEFAULT_LOGO_MAX_HEIGHT_PX);
         defaults.setSiteNameFontSizePx(DEFAULT_SITE_NAME_FONT_SIZE_PX);
         defaults.setContactEmail("andrea.terrasi78@gmail.com");
@@ -87,6 +88,7 @@ public class StoreSettingsService {
 
     private void applyUpdate(StoreSettings settings, StoreSettingsRequest request) {
         settings.setSiteName(firstNonBlank(trimToNull(request.getSiteName()), settings.getSiteName(), "TSATech Store"));
+        settings.setSiteMetaKeywords(trimToNull(request.getSiteMetaKeywords()));
         settings.setLogoUrl(trimToNull(request.getLogoUrl()));
         settings.setLogoMaxHeightPx(clampInt(request.getLogoMaxHeightPx(), settings.getLogoMaxHeightPx(), DEFAULT_LOGO_MAX_HEIGHT_PX, MIN_LOGO_MAX_HEIGHT_PX, MAX_LOGO_MAX_HEIGHT_PX));
         settings.setSiteNameFontSizePx(clampInt(request.getSiteNameFontSizePx(), settings.getSiteNameFontSizePx(), DEFAULT_SITE_NAME_FONT_SIZE_PX, MIN_SITE_NAME_FONT_SIZE_PX, MAX_SITE_NAME_FONT_SIZE_PX));
@@ -133,6 +135,7 @@ public class StoreSettingsService {
         StoreSettingsResponse response = new StoreSettingsResponse();
         response.setId(settings.getId());
         response.setSiteName(settings.getSiteName());
+        response.setSiteMetaKeywords(settings.getSiteMetaKeywords());
         response.setLogoUrl(settings.getLogoUrl());
         response.setLogoMaxHeightPx(clampInt(settings.getLogoMaxHeightPx(), null, DEFAULT_LOGO_MAX_HEIGHT_PX, MIN_LOGO_MAX_HEIGHT_PX, MAX_LOGO_MAX_HEIGHT_PX));
         response.setSiteNameFontSizePx(clampInt(settings.getSiteNameFontSizePx(), null, DEFAULT_SITE_NAME_FONT_SIZE_PX, MIN_SITE_NAME_FONT_SIZE_PX, MAX_SITE_NAME_FONT_SIZE_PX));
@@ -162,6 +165,7 @@ public class StoreSettingsService {
     private PublicStoreSettingsResponse toPublic(StoreSettings settings) {
         PublicStoreSettingsResponse response = new PublicStoreSettingsResponse();
         response.setSiteName(settings.getSiteName());
+        response.setSiteMetaKeywords(settings.getSiteMetaKeywords());
         response.setLogoUrl(settings.getLogoUrl());
         response.setLogoMaxHeightPx(clampInt(settings.getLogoMaxHeightPx(), null, DEFAULT_LOGO_MAX_HEIGHT_PX, MIN_LOGO_MAX_HEIGHT_PX, MAX_LOGO_MAX_HEIGHT_PX));
         response.setSiteNameFontSizePx(clampInt(settings.getSiteNameFontSizePx(), null, DEFAULT_SITE_NAME_FONT_SIZE_PX, MIN_SITE_NAME_FONT_SIZE_PX, MAX_SITE_NAME_FONT_SIZE_PX));

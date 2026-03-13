@@ -15,6 +15,9 @@ public class StoreSettings {
     @Column(name = "site_name", nullable = false, length = 255)
     private String siteName;
 
+    @Column(name = "site_meta_keywords", length = 1024)
+    private String siteMetaKeywords;
+
     @Column(name = "logo_url", columnDefinition = "TEXT")
     private String logoUrl;
 
@@ -98,6 +101,14 @@ public class StoreSettings {
 
     public void setSiteName(String siteName) {
         this.siteName = siteName;
+    }
+
+    public String getSiteMetaKeywords() {
+        return siteMetaKeywords;
+    }
+
+    public void setSiteMetaKeywords(String siteMetaKeywords) {
+        this.siteMetaKeywords = siteMetaKeywords;
     }
 
     public String getLogoUrl() {

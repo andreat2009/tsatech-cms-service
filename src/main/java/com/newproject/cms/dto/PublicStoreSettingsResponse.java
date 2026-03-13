@@ -2,6 +2,7 @@ package com.newproject.cms.dto;
 
 public class PublicStoreSettingsResponse {
     private String siteName;
+    private String siteMetaKeywords;
     private String logoUrl;
     private Integer logoMaxHeightPx;
     private Integer siteNameFontSizePx;
@@ -17,6 +18,8 @@ public class PublicStoreSettingsResponse {
 
     public String getSiteName() { return siteName; }
     public void setSiteName(String siteName) { this.siteName = siteName; }
+    public String getSiteMetaKeywords() { return siteMetaKeywords; }
+    public void setSiteMetaKeywords(String siteMetaKeywords) { this.siteMetaKeywords = siteMetaKeywords; }
     public String getLogoUrl() { return logoUrl; }
     public void setLogoUrl(String logoUrl) { this.logoUrl = logoUrl; }
     public Integer getLogoMaxHeightPx() { return logoMaxHeightPx; }

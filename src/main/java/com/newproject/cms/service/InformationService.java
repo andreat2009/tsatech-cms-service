@@ -210,6 +210,7 @@ public class InformationService {
         page.setContent(defaultContent.getContent());
 
         page.setSortOrder(request.getSortOrder() != null ? request.getSortOrder() : 0);
+        page.setSeoKeywords(trimToNull(request.getSeoKeywords()));
         page.setActive(request.getActive() != null ? request.getActive() : Boolean.TRUE);
         page.setSlug(uniqueSlug(request.getSlug(), defaultContent.getTitle(), createMode ? null : page.getId()));
 
@@ -277,6 +278,7 @@ public class InformationService {
         response.setTitle(localized.getTitle());
         response.setSlug(page.getSlug());
         response.setContent(localized.getContent());
+        response.setSeoKeywords(page.getSeoKeywords());
         response.setSortOrder(page.getSortOrder());
         response.setActive(page.getActive());
         response.setCreatedAt(page.getCreatedAt());

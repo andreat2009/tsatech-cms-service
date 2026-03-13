@@ -10,6 +10,7 @@ public class InformationRequest {
     private String slug;
     @NotBlank
     private String content;
+    private String seoKeywords;
     private Integer sortOrder;
     private Boolean active;
     private Map<String, LocalizedContent> translations = new LinkedHashMap<>();
@@ -20,6 +21,8 @@ public class InformationRequest {
     public void setSlug(String slug) { this.slug = slug; }
     public String getContent() { return content; }
     public void setContent(String content) { this.content = content; }
+    public String getSeoKeywords() { return seoKeywords; }
+    public void setSeoKeywords(String seoKeywords) { this.seoKeywords = seoKeywords; }
     public Integer getSortOrder() { return sortOrder; }
     public void setSortOrder(Integer sortOrder) { this.sortOrder = sortOrder; }
     public Boolean getActive() { return active; }

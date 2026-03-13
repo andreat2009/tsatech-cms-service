@@ -29,6 +29,8 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/api/cms/settings/public", "/api/cms/settings/runtime").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/cms/settings", "/api/cms/settings/**").hasRole("ADMIN")
                 .requestMatchers(HttpMethod.PUT, "/api/cms/settings", "/api/cms/settings/**").hasRole("ADMIN")
+                .requestMatchers(HttpMethod.POST, "/api/cms/analytics/events").permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/cms/analytics", "/api/cms/analytics/**").hasRole("ADMIN")
                 .requestMatchers(HttpMethod.POST, "/api/cms/information", "/api/cms/information/**").hasRole("ADMIN")
                 .requestMatchers(HttpMethod.PUT, "/api/cms/information/**").hasRole("ADMIN")
                 .requestMatchers(HttpMethod.DELETE, "/api/cms/information/**").hasRole("ADMIN")

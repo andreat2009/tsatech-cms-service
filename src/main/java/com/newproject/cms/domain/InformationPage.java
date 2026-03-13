@@ -21,6 +21,9 @@ public class InformationPage {
     @Column(columnDefinition = "text", nullable = false)
     private String content;
 
+    @Column(name = "seo_keywords", length = 1024)
+    private String seoKeywords;
+
     @Column(name = "sort_order", nullable = false)
     private Integer sortOrder;
 
@@ -44,6 +47,8 @@ public class InformationPage {
     public void setSlug(String slug) { this.slug = slug; }
     public String getContent() { return content; }
     public void setContent(String content) { this.content = content; }
+    public String getSeoKeywords() { return seoKeywords; }
+    public void setSeoKeywords(String seoKeywords) { this.seoKeywords = seoKeywords; }
     public Integer getSortOrder() { return sortOrder; }
     public void setSortOrder(Integer sortOrder) { this.sortOrder = sortOrder; }
     public Boolean getActive() { return active; }
