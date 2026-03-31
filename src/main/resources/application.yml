@@ -51,7 +51,7 @@ cms:
     enabled: ${CMS_EVENTS_ENABLED:true}
     topic: ${CMS_EVENTS_TOPIC:cms.events}
   internal:
-    token: ${CMS_INTERNAL_TOKEN:change-me-cms-internal-token}
+    token: ${CMS_INTERNAL_TOKEN:}
 
 management:
   endpoints:

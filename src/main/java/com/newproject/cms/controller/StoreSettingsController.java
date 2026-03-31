@@ -22,7 +22,7 @@ public class StoreSettingsController {
 
     public StoreSettingsController(
         StoreSettingsService service,
-        @Value("${cms.internal.token:change-me-cms-internal-token}") String internalToken
+        @Value("${cms.internal.token:}") String internalToken
     ) {
         this.service = service;
         this.internalToken = internalToken;
@@ -47,7 +47,10 @@ public class StoreSettingsController {
     public SmtpRuntimeSettingsResponse runtimeSettings(
         @RequestHeader(value = "X-Internal-Token", required = false) String requestToken
     ) {
-        if (requestToken == null || !requestToken.equals(internalToken)) {
+        if (internalToken == null || internalToken.isBlank()) {
+            throw new AccessDeniedException("Internal token not configured");
+        }
+        if (requestToken == null || requestToken.isBlank() || !requestToken.equals(internalToken)) {
             throw new AccessDeniedException("Invalid internal token");
         }
         return service.getRuntimeSmtpSettings();
