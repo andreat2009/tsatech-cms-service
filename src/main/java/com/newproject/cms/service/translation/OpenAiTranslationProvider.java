@@ -79,11 +79,37 @@ public class OpenAiTranslationProvider implements TranslationProvider {
         HttpClient client = buildOpenAiHttpClient();
         Map<String, LocalizedContent> translated = new LinkedHashMap<>();
         int attempts = Math.max(DEFAULT_RETRY_COUNT, 1);
-
+        LinkedHashSet<String> remainingTargets = new LinkedHashSet<>();
         for (String targetLanguage : new LinkedHashSet<>(targetLanguages)) {
-            if (targetLanguage == null || targetLanguage.isBlank()) {
-                continue;
+            if (targetLanguage != null && !targetLanguage.isBlank()) {
+                remainingTargets.add(targetLanguage);
             }
+        }
+
+        if (!remainingTargets.isEmpty()) {
+            try {
+                Map<String, LocalizedContent> batchTranslations = translateAllTargetsWithRetry(
+                    client,
+                    apiKey,
+                    model,
+                    baseUrl,
+                    sourceLanguage,
+                    sourceContent,
+                    remainingTargets,
+                    attempts
+                );
+                if (batchTranslations != null && !batchTranslations.isEmpty()) {
+                    translated.putAll(batchTranslations);
+                    remainingTargets.removeAll(batchTranslations.keySet());
+                }
+            } catch (Exception ex) {
+                String msg = "OpenAI CMS batch translation failed: " + ex.getMessage();
+                logger.warn(msg);
+                result.getWarnings().add(msg);
+            }
+        }
+
+        for (String targetLanguage : remainingTargets) {
             try {
                 LocalizedContent translatedContent = translateSingleTargetWithRetry(
                     client,
@@ -114,6 +140,59 @@ public class OpenAiTranslationProvider implements TranslationProvider {
         }
 
         return result;
+    }
+
+    private Map<String, LocalizedContent> translateAllTargetsWithRetry(
+        HttpClient client,
+        String apiKey,
+        String model,
+        String baseUrl,
+        String sourceLanguage,
+        LocalizedContent sourceContent,
+        Set<String> targetLanguages,
+        int maxAttempts
+    ) throws IOException, InterruptedException {
+        Exception last = null;
+        for (int attempt = 1; attempt <= Math.max(1, maxAttempts); attempt++) {
+            try {
+                String content = callOpenAiBatch(
+                    client,
+                    apiKey,
+                    model,
+                    baseUrl,
+                    sourceLanguage,
+                    sourceContent,
+                    targetLanguages
+                );
+                return parseBatchTranslations(content, targetLanguages);
+            } catch (Exception ex) {
+                last = ex;
+                if (attempt >= maxAttempts || !isRetryable(ex)) {
+                    break;
+                }
+                long delayMs = RETRY_BASE_DELAY_MS * attempt;
+                logger.warn(
+                    "OpenAI CMS batch translation retry {}/{} for languages={} after error: {}",
+                    attempt,
+                    maxAttempts,
+                    targetLanguages,
+                    ex.getMessage()
+                );
+                sleepQuietly(delayMs);
+            }
+        }
+
+        if (last instanceof IOException ioEx) {
+            throw ioEx;
+        }
+        if (last instanceof InterruptedException interruptedException) {
+            Thread.currentThread().interrupt();
+            throw interruptedException;
+        }
+        if (last != null) {
+            throw new IOException(last.getMessage(), last);
+        }
+        return Map.of();
     }
 
     private LocalizedContent translateSingleTargetWithRetry(
@@ -167,6 +246,55 @@ public class OpenAiTranslationProvider implements TranslationProvider {
             throw new IOException(last.getMessage(), last);
         }
         return null;
+    }
+
+    private String callOpenAiBatch(
+        HttpClient client,
+        String apiKey,
+        String model,
+        String baseUrl,
+        String sourceLanguage,
+        LocalizedContent sourceContent,
+        Set<String> targetLanguages
+    ) throws IOException, InterruptedException {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("model", model);
+        payload.put("temperature", 0.0);
+        payload.put("max_tokens", 7000);
+        payload.put("response_format", Map.of("type", "json_object"));
+        payload.put("messages", List.of(
+            Map.of(
+                "role", "system",
+                "content", "You translate ecommerce informational pages. Return ONLY a valid JSON object with schema {\"translations\":{\"en\":{\"title\":\"...\",\"content\":\"...\"}}}. Keep HTML structure and links valid. Preserve brand names and legal references. Escape quotes, backslashes, tabs and new lines with standard JSON escaping."
+            ),
+            Map.of(
+                "role", "user",
+                "content", buildBatchUserPrompt(sourceLanguage, sourceContent, targetLanguages)
+            )
+        ));
+
+        String body = objectMapper.writeValueAsString(payload);
+
+        HttpRequest request = HttpRequest.newBuilder()
+            .uri(URI.create(baseUrl + "/chat/completions"))
+            .timeout(Duration.ofMillis(Math.max(1000, properties.getTimeoutMs())))
+            .header("Authorization", "Bearer " + apiKey)
+            .header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(body))
+            .build();
+
+        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() >= 400) {
+            throw new IOException("HTTP " + response.statusCode() + " from OpenAI: " + abbreviate(trimToNull(response.body()), 240));
+        }
+
+        JsonNode root = objectMapper.readTree(response.body());
+        String content = root.path("choices").path(0).path("message").path("content").asText();
+        String trimmed = trimToNull(content);
+        if (trimmed == null) {
+            throw new IOException("Empty OpenAI content");
+        }
+        return trimmed;
     }
 
     private String callOpenAi(
@@ -262,6 +390,39 @@ public class OpenAiTranslationProvider implements TranslationProvider {
 
         logger.warn("Unable to load JVM default cacerts; OpenAI HTTPS calls will use process truststore config");
         return null;
+    }
+
+    private Map<String, LocalizedContent> parseBatchTranslations(String content, Set<String> targetLanguages) throws IOException {
+        String jsonPayload = extractJsonPayload(content);
+        JsonNode root = readModelJson(jsonPayload);
+
+        JsonNode translationsNode = root.path("translations");
+        if (!translationsNode.isObject()) {
+            Map<String, LocalizedContent> single = new LinkedHashMap<>();
+            if (targetLanguages.size() == 1) {
+                String onlyLanguage = targetLanguages.iterator().next();
+                LocalizedContent translated = parseSingleTranslation(content, onlyLanguage);
+                if (translated != null) {
+                    single.put(onlyLanguage, translated);
+                }
+            }
+            return single;
+        }
+
+        Map<String, LocalizedContent> parsed = new LinkedHashMap<>();
+        for (String targetLanguage : targetLanguages) {
+            JsonNode candidate = translationsNode.path(targetLanguage);
+            if (!candidate.isObject()) {
+                continue;
+            }
+            LocalizedContent localized = new LocalizedContent();
+            localized.setTitle(trimToNull(candidate.path("title").asText(null)));
+            localized.setContent(trimToNull(candidate.path("content").asText(null)));
+            if (localized.getTitle() != null || localized.getContent() != null) {
+                parsed.put(targetLanguage, localized);
+            }
+        }
+        return parsed;
     }
 
     private LocalizedContent parseSingleTranslation(String content, String targetLanguage) throws IOException {
@@ -379,6 +540,19 @@ public class OpenAiTranslationProvider implements TranslationProvider {
             return trimmed.substring(firstBrace, lastBrace + 1);
         }
         return trimmed;
+    }
+
+    private String buildBatchUserPrompt(String sourceLanguage, LocalizedContent sourceContent, Set<String> targetLanguages) {
+        String sourceTitle = firstNonBlank(trimToNull(sourceContent.getTitle()), "");
+        String sourceHtml = firstNonBlank(trimToNull(sourceContent.getContent()), "");
+
+        return "Source language: " + sourceLanguage + "\n"
+            + "Target languages: " + String.join(", ", targetLanguages) + "\n"
+            + "Title: " + sourceTitle + "\n"
+            + "HTML content: " + sourceHtml + "\n"
+            + "Return JSON only with schema: {\"translations\":{\"en\":{\"title\":\"...\",\"content\":\"...\"}}}."
+            + " Include every requested target language exactly once."
+            + " Keep the HTML valid and preserve links.";
     }
 
     private String buildUserPrompt(String sourceLanguage, LocalizedContent sourceContent, String targetLanguage) {
