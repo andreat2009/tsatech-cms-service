@@ -182,10 +182,11 @@ public class OpenAiTranslationProvider implements TranslationProvider {
         payload.put("model", model);
         payload.put("temperature", 0.0);
         payload.put("max_tokens", 2400);
+        payload.put("response_format", Map.of("type", "json_object"));
         payload.put("messages", List.of(
             Map.of(
                 "role", "system",
-                "content", "You translate ecommerce informational pages. Return ONLY valid JSON with fields title and content. Keep HTML structure and links valid. Preserve brand names and legal references."
+                "content", "You translate ecommerce informational pages. Return ONLY a valid JSON object with fields title and content. Keep HTML structure and links valid. Preserve brand names and legal references. Escape quotes, backslashes, tabs and new lines with standard JSON escaping."
             ),
             Map.of(
                 "role", "user",
@@ -265,7 +266,7 @@ public class OpenAiTranslationProvider implements TranslationProvider {
 
     private LocalizedContent parseSingleTranslation(String content, String targetLanguage) throws IOException {
         String jsonPayload = extractJsonPayload(content);
-        JsonNode root = objectMapper.readTree(jsonPayload);
+        JsonNode root = readModelJson(jsonPayload);
 
         JsonNode candidate = root.has("translations") && root.get("translations").isObject()
             ? root.get("translations")
@@ -289,6 +290,79 @@ public class OpenAiTranslationProvider implements TranslationProvider {
         return localized;
     }
 
+
+
+    private JsonNode readModelJson(String jsonPayload) throws IOException {
+        try {
+            return objectMapper.readTree(jsonPayload);
+        } catch (IOException ex) {
+            String sanitized = sanitizeModelJson(jsonPayload);
+            if (!sanitized.equals(jsonPayload)) {
+                return objectMapper.readTree(sanitized);
+            }
+            throw ex;
+        }
+    }
+
+    private String sanitizeModelJson(String value) {
+        StringBuilder sanitized = new StringBuilder(value.length() + 32);
+        boolean inString = false;
+        boolean escaping = false;
+
+        for (int i = 0; i < value.length(); i++) {
+            char current = value.charAt(i);
+
+            if (escaping) {
+                if (!isValidJsonEscape(current)) {
+                    sanitized.append('\\');
+                }
+                sanitized.append(current);
+                escaping = false;
+                continue;
+            }
+
+            if (current == '"') {
+                sanitized.append(current);
+                inString = !inString;
+                continue;
+            }
+
+            if (inString && current == '\\') {
+                sanitized.append(current);
+                escaping = true;
+                continue;
+            }
+
+            if (inString && current < 0x20) {
+                sanitized.append(escapeControlCharacter(current));
+                continue;
+            }
+
+            sanitized.append(current);
+        }
+
+        if (escaping) {
+            sanitized.append('\\');
+        }
+
+        return sanitized.toString();
+    }
+
+    private boolean isValidJsonEscape(char value) {
+        return value == '"' || value == '\\' || value == '/' || value == 'b' || value == 'f'
+            || value == 'n' || value == 'r' || value == 't' || value == 'u';
+    }
+
+    private String escapeControlCharacter(char value) {
+        return switch (value) {
+            case '\n' -> "\\n";
+            case '\r' -> "\\r";
+            case '\t' -> "\\t";
+            case '\b' -> "\\b";
+            case '\f' -> "\\f";
+            default -> String.format("\\u%04x", (int) value);
+        };
+    }
     private String extractJsonPayload(String content) {
         String trimmed = content.trim();
         if (trimmed.startsWith("```") && trimmed.contains("\n")) {
